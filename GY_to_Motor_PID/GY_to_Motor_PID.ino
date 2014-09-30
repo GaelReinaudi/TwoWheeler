@@ -66,10 +66,10 @@ void setup(){
     Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
 
     // wait for ready
-    Serial.println(F("\nSend any character to begin DMP programming and demo: "));
-    while (Serial.available() && Serial.read()); // empty buffer
-    while (!Serial.available());                 // wait for data
-    while (Serial.available() && Serial.read()); // empty buffer again
+    //Serial.println(F("\nSend any character to begin DMP programming and demo: "));
+    //while (Serial.available() && Serial.read()); // empty buffer
+    //while (!Serial.available());                 // wait for data
+    //while (Serial.available() && Serial.read()); // empty buffer again
 
     // load and configure the DMP
     Serial.println(F("Initializing DMP..."));
@@ -157,7 +157,9 @@ void loop(){
     } 
     else if (mpuIntStatus & 0x02) {
         // wait for correct available data length, should be a VERY short wait
-        while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+        while (fifoCount < packetSize) {
+          fifoCount = mpu.getFIFOCount();
+        }
 
         // read a packet from FIFO
         mpu.getFIFOBytes(fifoBuffer, packetSize);
@@ -166,36 +168,43 @@ void loop(){
         // (this lets us immediately read more without waiting for an interrupt)
         fifoCount -= packetSize;
 
-            // display Euler angles in degrees
-            mpu.dmpGetQuaternion(&q, fifoBuffer);
-            mpu.dmpGetEuler(euler, &q);
-            Serial.print("euler\t");
-            Serial.print(euler[0] * 180/M_PI);
-            Serial.print("\t");
-            Serial.print(euler[1] * 180/M_PI);
-            Serial.print("\t");
-            Serial.print(euler[2] * 180/M_PI);
+        // display Euler angles in degrees
+        mpu.dmpGetQuaternion(&q, fifoBuffer);
+        mpu.dmpGetEuler(euler, &q);
+        Serial.print("euler\t");
+        //Serial.print(euler[0] * 180/M_PI);
+        //Serial.print("\t");
+        //Serial.print(euler[1] * 180/M_PI);
+        //Serial.print("\t");
+        Serial.print(euler[2] * 180/M_PI);
 
-            // display Euler angles in degrees
-            mpu.dmpGetQuaternion(&q, fifoBuffer);
-            mpu.dmpGetGravity(&gravity, &q);
-            mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-            Serial.print("\typr\t");
-            Serial.print(ypr[0] * 180/M_PI);
-            Serial.print("\t");
-            Serial.print(ypr[1] * 180/M_PI);
-            Serial.print("\t");
-            Serial.print(ypr[2] * 180/M_PI);
+        // display Euler angles in degrees
+        mpu.dmpGetQuaternion(&q, fifoBuffer);
+        mpu.dmpGetGravity(&gravity, &q);
+        mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+        //Serial.print("\t\typr\t");
+        //Serial.print(ypr[0] * 180/M_PI);
+        //Serial.print("\t");
+        //Serial.print(ypr[1] * 180/M_PI);
+        //Serial.print("\t");
+        //Serial.print(ypr[2] * 180/M_PI);
 
-            Serial.println("");
 
         // blink LED to indicate activity
         blinkState = !blinkState;
         digitalWrite(LED_PIN, blinkState);
     }
 
+    Input = euler[2] * 180/M_PI - 90;
     myPID.Compute();
     int v = Output;
+    Serial.print("\t In ");
+    Serial.print(Input);
+    Serial.print("\t Out ");
+    Serial.print(Output);
+
+    Serial.println("");
+    
     if(v > 0) {
         M1->run(FORWARD);
         M2->run(FORWARD);
