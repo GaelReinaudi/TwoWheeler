@@ -1,10 +1,13 @@
 
-#include<Wire.h>
 #include <Adafruit_MotorShield.h>
 #include "utility/Adafruit_PWMServoDriver.h"
 #include <PID_v1.h>
 
+#include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
+#include<Wire.h>
+
+#include "Kalman.h" // Source: https://github.com/TKJElectronics/KalmanFilter
 
 // Create the motor shield object with the default I2C address
 Adafruit_MotorShield AFMS = Adafruit_MotorShield(); 
@@ -37,7 +40,7 @@ float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gra
 //Define Variables we'll be connecting to
 double Setpoint, Input, Output;
 //Specify the links and initial tuning parameters
-PID myPID(&Input, &Output, &Setpoint,5,0.0,0.0, DIRECT);
+PID myPID(&Input, &Output, &Setpoint,20,100,3, DIRECT);
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -51,12 +54,16 @@ void dmpDataReady() {
 // ===                      INITIAL SETUP                       ===
 // ================================================================
 void setup(){
-  Wire.begin();
-  
-    Serial.begin(57600);
+    Serial.begin(115200);
     while (!Serial); // wait for Leonardo enumeration, others continue immediately
 
     Serial.println("Adafruit Motorshield v2 - DC Motor test!");
+    AFMS.begin();  // create with the default frequency 1.6KHz
+    //AFMS.begin(1000);  // OR with a different frequency, say 1KHz
+
+    Wire.begin();
+    TWBR = 24; // 400kHz I2C clock (200kHz if CPU is 8MHz)
+  
     Serial.println(F("Initializing I2C devices..."));
 
     mpu.initialize();
@@ -80,6 +87,8 @@ void setup(){
     //mpu.setYGyroOffset(76);
     //mpu.setZGyroOffset(-85);
     //mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
+
+    mpu.setSleepEnabled(false);
 
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
@@ -113,7 +122,7 @@ void setup(){
   
   //initialize the variables we're linked to
   Input = 0.0;
-  Setpoint = 0.0;
+  Setpoint =4.0;
   myPID.SetOutputLimits(-255, 255);								//the arduino pwm limits
   //turn the PID on
   myPID.SetMode(AUTOMATIC);
@@ -124,8 +133,9 @@ void setup(){
 // ================================================================
 void loop(){
     // if programming failed, don't try to do anything
-    if (!dmpReady) return;
-
+    if (!dmpReady)
+        return;
+    bool donePDI = false;
     // wait for MPU interrupt or extra packet(s) available
     while (!mpuInterrupt && fifoCount < packetSize) {
         // other program behavior stuff here
@@ -136,8 +146,42 @@ void loop(){
         // stuff to see if mpuInterrupt is true, and if so, "break;" from the
         // while() loop to immediately process the MPU data
         // .
-        // .
-        // .
+        if(!donePDI) {
+            Serial.print("\tgravity\t");
+            Serial.print(gravity.x);
+            Serial.print("\t");
+            Serial.print(gravity.y);
+            Serial.print("\t");
+            Serial.print(gravity.z);
+    
+            Input = -gravity.z*100.0;
+            myPID.Compute();
+            int v = Output;
+            Serial.print("\t In ");
+            Serial.print(Input);
+            Serial.print("\t Out ");
+            Serial.print(Output);
+        
+            if(v > 0) {
+                M1->run(FORWARD);
+                M2->run(FORWARD);
+                v = min(255, v);
+            }
+            else if(v < 0) {
+                M1->run(BACKWARD);
+                M2->run(BACKWARD);
+                v = min(255, -v);
+            }
+            else {
+                M1->run(RELEASE);
+                M2->run(RELEASE);
+            }
+            M1->setSpeed(v);  
+            M2->setSpeed(v);  
+            donePDI = true;
+            
+            Serial.println("");
+        }
     }
 
     // reset interrupt flag and get INT_STATUS byte
@@ -161,6 +205,11 @@ void loop(){
           fifoCount = mpu.getFIFOCount();
         }
 
+        while (fifoCount >= 2 * packetSize) {
+            // read a packet from FIFO
+            mpu.getFIFOBytes(fifoBuffer, packetSize);
+            fifoCount = mpu.getFIFOCount();
+        }
         // read a packet from FIFO
         mpu.getFIFOBytes(fifoBuffer, packetSize);
         
@@ -170,18 +219,18 @@ void loop(){
 
         // display Euler angles in degrees
         mpu.dmpGetQuaternion(&q, fifoBuffer);
-        mpu.dmpGetEuler(euler, &q);
-        Serial.print("euler\t");
+        //mpu.dmpGetEuler(euler, &q);
+        //Serial.print("euler\t");
         //Serial.print(euler[0] * 180/M_PI);
         //Serial.print("\t");
         //Serial.print(euler[1] * 180/M_PI);
         //Serial.print("\t");
-        Serial.print(euler[2] * 180/M_PI);
+        //Serial.print(euler[2] * 180/M_PI);
 
         // display Euler angles in degrees
-        mpu.dmpGetQuaternion(&q, fifoBuffer);
+        //mpu.dmpGetQuaternion(&q, fifoBuffer);
         mpu.dmpGetGravity(&gravity, &q);
-        mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+        //mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
         //Serial.print("\t\typr\t");
         //Serial.print(ypr[0] * 180/M_PI);
         //Serial.print("\t");
@@ -189,38 +238,24 @@ void loop(){
         //Serial.print("\t");
         //Serial.print(ypr[2] * 180/M_PI);
 
+        Serial.print("\tgravity\t");
+        Serial.print(gravity.x);
+        Serial.print("\t");
+        Serial.print(gravity.y);
+        Serial.print("\t");
+        Serial.print(gravity.z);
 
-        // blink LED to indicate activity
-        blinkState = !blinkState;
-        digitalWrite(LED_PIN, blinkState);
+        Serial.println("");
+
+        static unsigned char c = 0;
+        c += 32;
+        if(c == 0) {
+            // blink LED to indicate activity
+            blinkState = !blinkState;
+            digitalWrite(LED_PIN, blinkState);
+        }
     }
 
-    Input = euler[2] * 180/M_PI - 90;
-    myPID.Compute();
-    int v = Output;
-    Serial.print("\t In ");
-    Serial.print(Input);
-    Serial.print("\t Out ");
-    Serial.print(Output);
-
-    Serial.println("");
-    
-    if(v > 0) {
-        M1->run(FORWARD);
-        M2->run(FORWARD);
-        v = min(255, v);
-    }
-    else if(v < 0) {
-        M1->run(BACKWARD);
-        M2->run(BACKWARD);
-        v = min(255, -v);
-    }
-    else {
-        M1->run(RELEASE);
-        M2->run(RELEASE);
-    }
-    M1->setSpeed(v);  
-    M2->setSpeed(v);  
 }
 
 
