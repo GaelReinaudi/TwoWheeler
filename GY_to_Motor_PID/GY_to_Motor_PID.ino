@@ -40,7 +40,7 @@ float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gra
 //Define Variables we'll be connecting to
 double Setpoint, Input, Output;
 //Specify the links and initial tuning parameters
-PID myPID(&Input, &Output, &Setpoint,20,100,3, DIRECT);
+PID myPID(&Input, &Output, &Setpoint,3,50,0.3, DIRECT);
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -123,7 +123,7 @@ void setup(){
   //initialize the variables we're linked to
   Input = 0.0;
   Setpoint =4.0;
-  myPID.SetOutputLimits(-255, 255);								//the arduino pwm limits
+  myPID.SetOutputLimits(-150, 150);								//the arduino pwm limits
   //turn the PID on
   myPID.SetMode(AUTOMATIC);
 }
