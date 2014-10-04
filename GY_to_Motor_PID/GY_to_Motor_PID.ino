@@ -7,8 +7,6 @@
 #include "MPU6050_6Axis_MotionApps20.h"
 #include<Wire.h>
 
-#include "Kalman.h" // Source: https://github.com/TKJElectronics/KalmanFilter
-
 // Create the motor shield object with the default I2C address
 Adafruit_MotorShield AFMS = Adafruit_MotorShield(); 
 // Select which 'port' M1, M2, M3 or M4. In this case, M1
@@ -30,15 +28,13 @@ uint8_t fifoBuffer[64]; // FIFO storage buffer
 
 // orientation/motion vars
 Quaternion q;           // [w, x, y, z]         quaternion container
-VectorInt16 aa;         // [x, y, z]            accel sensor measurements
-VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
-VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
 VectorFloat gravity;    // [x, y, z]            gravity vector
-float euler[3];         // [psi, theta, phi]    Euler angle container
-float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+bool overAngle = false; // true if the angle is very much to big and we should stop the motors
 
 //Define Variables we'll be connecting to
-double Setpoint, Input, Output;
+double Input = 0.0, Output = 0.0;
+double InitialSetpoint = 4.0;
+double Setpoint = InitialSetpoint;
 //Specify the links and initial tuning parameters
 PID myPID(&Input, &Output, &Setpoint,3,50,0.3, DIRECT);
 
@@ -71,12 +67,6 @@ void setup(){
     // verify connection
     Serial.println(F("Testing device connections..."));
     Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
-
-    // wait for ready
-    //Serial.println(F("\nSend any character to begin DMP programming and demo: "));
-    //while (Serial.available() && Serial.read()); // empty buffer
-    //while (!Serial.available());                 // wait for data
-    //while (Serial.available() && Serial.read()); // empty buffer again
 
     // load and configure the DMP
     Serial.println(F("Initializing DMP..."));
@@ -121,8 +111,6 @@ void setup(){
     pinMode(LED_PIN, OUTPUT);
   
   //initialize the variables we're linked to
-  Input = 0.0;
-  Setpoint =4.0;
   myPID.SetOutputLimits(-150, 150);								//the arduino pwm limits
   //turn the PID on
   myPID.SetMode(AUTOMATIC);
@@ -131,7 +119,8 @@ void setup(){
 // ================================================================
 // ===                    MAIN PROGRAM LOOP                     ===
 // ================================================================
-void loop(){
+void loop()
+{
     // if programming failed, don't try to do anything
     if (!dmpReady)
         return;
@@ -147,40 +136,8 @@ void loop(){
         // while() loop to immediately process the MPU data
         // .
         if(!donePDI) {
-            Serial.print("\tgravity\t");
-            Serial.print(gravity.x);
-            Serial.print("\t");
-            Serial.print(gravity.y);
-            Serial.print("\t");
-            Serial.print(gravity.z);
-    
-            Input = -gravity.z*100.0;
-            myPID.Compute();
-            int v = Output;
-            Serial.print("\t In ");
-            Serial.print(Input);
-            Serial.print("\t Out ");
-            Serial.print(Output);
-        
-            if(v > 0) {
-                M1->run(FORWARD);
-                M2->run(FORWARD);
-                v = min(255, v);
-            }
-            else if(v < 0) {
-                M1->run(BACKWARD);
-                M2->run(BACKWARD);
-                v = min(255, -v);
-            }
-            else {
-                M1->run(RELEASE);
-                M2->run(RELEASE);
-            }
-            M1->setSpeed(v);  
-            M2->setSpeed(v);  
+            iteratePID();
             donePDI = true;
-            
-            Serial.println("");
         }
     }
 
@@ -217,36 +174,17 @@ void loop(){
         // (this lets us immediately read more without waiting for an interrupt)
         fifoCount -= packetSize;
 
-        // display Euler angles in degrees
         mpu.dmpGetQuaternion(&q, fifoBuffer);
-        //mpu.dmpGetEuler(euler, &q);
-        //Serial.print("euler\t");
-        //Serial.print(euler[0] * 180/M_PI);
-        //Serial.print("\t");
-        //Serial.print(euler[1] * 180/M_PI);
-        //Serial.print("\t");
-        //Serial.print(euler[2] * 180/M_PI);
-
-        // display Euler angles in degrees
-        //mpu.dmpGetQuaternion(&q, fifoBuffer);
         mpu.dmpGetGravity(&gravity, &q);
-        //mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-        //Serial.print("\t\typr\t");
-        //Serial.print(ypr[0] * 180/M_PI);
-        //Serial.print("\t");
-        //Serial.print(ypr[1] * 180/M_PI);
-        //Serial.print("\t");
-        //Serial.print(ypr[2] * 180/M_PI);
 
-        Serial.print("\tgravity\t");
-        Serial.print(gravity.x);
-        Serial.print("\t");
-        Serial.print(gravity.y);
-        Serial.print("\t");
-        Serial.print(gravity.z);
-
-        Serial.println("");
-
+        // too much angle ?
+        if (abs(gravity.z) > 0.6) {
+            overAngle = true;
+        }
+        else {
+            overAngle = false;
+        }
+        
         static unsigned char c = 0;
         c += 32;
         if(c == 0) {
@@ -255,7 +193,69 @@ void loop(){
             digitalWrite(LED_PIN, blinkState);
         }
     }
-
 }
 
+void iteratePID()
+{
+    Serial.print("\tgravity\t");
+    Serial.print(gravity.x);
+    Serial.print("\t");
+    Serial.print(gravity.y);
+    Serial.print("\t");
+    Serial.print(gravity.z);
+    
+    if (overAngle) {
+        // makes the setpoint to come back to InitialSetpoint
+        Input = 0;
+        Setpoint = InitialSetpoint;
+    }
+    else {
+        Input = -gravity.z*100.0;
+        // adjust setpoint to aim at motors off
+        Setpoint += Output * 0.0001;
+    }
+    myPID.Compute();
+    int v = Output;
+    if (overAngle) {
+        setMotorSpeed(0, 0);
+    }
+    else {
+        setMotorSpeed(v, v);
+    }
+    
+    Serial.print("\t\t Setpoint ");
+    Serial.print(Setpoint);
+    Serial.print("\t In ");
+    Serial.print(Input);
+    Serial.print("\t Out ");
+    Serial.print(Output);
+    Serial.println("");
+}
 
+void setMotorSpeed(int16_t v1, int16_t v2)
+{
+    v1 = max(-255, min(255, v1));
+    v2 = max(-255, min(255, v2));
+    if(v1 > 0) {
+        M1->run(FORWARD);
+    }
+    else if(v1 < 0) {
+        M1->run(BACKWARD);
+        v1 = -v1;
+    }
+    else {
+        M1->run(RELEASE);
+    }    
+    if(v2 > 0) {
+        M2->run(FORWARD);
+    }
+    else if(v2 < 0) {
+        M2->run(BACKWARD);
+        v2 = -v2;
+    }
+    else {
+        M2->run(RELEASE);
+    }
+    M1->setSpeed(v1);  
+    M2->setSpeed(v2);  
+}
