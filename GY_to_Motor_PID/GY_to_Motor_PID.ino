@@ -36,7 +36,7 @@ double Input = 0.0, Output = 0.0;
 double InitialSetpoint = 4.0;
 double Setpoint = InitialSetpoint;
 //Specify the links and initial tuning parameters
-PID myPID(&Input, &Output, &Setpoint,3,50,0.3, DIRECT);
+PID myPID(&Input, &Output, &Setpoint,3,50,0.35, DIRECT);
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -181,7 +181,8 @@ void loop()
         if (abs(gravity.z) > 0.6) {
             overAngle = true;
         }
-        else {
+        // hysteresis to reanable the balacing when we are very close to vertical
+        if (overAngle && abs(gravity.z) < 0.05) {
             overAngle = false;
         }
         
@@ -206,13 +207,17 @@ void iteratePID()
     
     if (overAngle) {
         // makes the setpoint to come back to InitialSetpoint
-        Input = 0;
+        myPID.SetMode(MANUAL);
+        Input = InitialSetpoint;
         Setpoint = InitialSetpoint;
+        Output = 0.0;
     }
     else {
+        myPID.SetMode(AUTOMATIC);
         Input = -gravity.z*100.0;
         // adjust setpoint to aim at motors off
-        Setpoint += Output * 0.0001;
+        if (abs(Output) > 20)
+            Setpoint += Output * 0.00001;
     }
     myPID.Compute();
     int v = Output;
