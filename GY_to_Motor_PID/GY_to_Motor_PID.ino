@@ -33,10 +33,13 @@ bool overAngle = false; // true if the angle is very much to big and we should s
 
 //Define Variables we'll be connecting to
 double Input = 0.0, Output = 0.0;
-double InitialSetpoint = 4.0;
-double Setpoint = InitialSetpoint;
+double InitialSetpointGz = 15.0;
+double Setpoint = InitialSetpointGz;
 //Specify the links and initial tuning parameters
 PID myPID(&Input, &Output, &Setpoint,3,50,0.35, DIRECT);
+
+double voltage = 8.0; // V
+double scaleOutput = 12.0 / voltage;
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -178,11 +181,11 @@ void loop()
         mpu.dmpGetGravity(&gravity, &q);
 
         // too much angle ?
-        if (abs(gravity.z) > 0.6) {
+        if (abs(InitialSetpointGz - gravity.z*100.0) > 60) {
             overAngle = true;
         }
         // hysteresis to reanable the balacing when we are very close to vertical
-        if (overAngle && abs(gravity.z) < 0.05) {
+        if (overAngle && abs(InitialSetpointGz - gravity.z*100.0) < 5) {
             overAngle = false;
         }
         
@@ -206,21 +209,21 @@ void iteratePID()
     Serial.print(gravity.z);
     
     if (overAngle) {
-        // makes the setpoint to come back to InitialSetpoint
+        // makes the setpoint to come back to InitialSetpointGz
         myPID.SetMode(MANUAL);
-        Input = InitialSetpoint;
-        Setpoint = InitialSetpoint;
+        Input = 0;
+        Setpoint = 0;
         Output = 0.0;
     }
     else {
         myPID.SetMode(AUTOMATIC);
-        Input = -gravity.z*100.0;
+        Input = InitialSetpointGz - gravity.z*100.0;
         // adjust setpoint to aim at motors off
         if (abs(Output) > 20)
             Setpoint += Output * 0.00001;
     }
     myPID.Compute();
-    int v = Output;
+    int v = Output * scaleOutput;
     if (overAngle) {
         setMotorSpeed(0, 0);
     }
